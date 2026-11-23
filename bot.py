@@ -8,17 +8,19 @@ import storage
 load_dotenv()
 storage.init_db()
 
-GRADIENT_COLORS = [
-    0x6366F1,
-    0x8B5CF6,
-    0xB84AD9,
-]
+# Colours matched to the new custom emoji accents:
+# browse (1574456458429599764) -> purple/violet
+# add    (1574456406113779772) -> blue
+# Users  (1574456302778712084) -> pink/magenta
+COLOR_BROWSE = 0x9B5DE5
+COLOR_ADD = 0x3B82F6
+COLOR_USERS = 0xEC4899
 
 FULLWIDTH_DIGITS = str.maketrans("0123456789", "０１２３４５６７８９")
 
-EMOJI_BROWSE = discord.PartialEmoji(name="Playlist_Browse", id=1574452329976172596)
-EMOJI_ADD = discord.PartialEmoji(name="Playlist_Add", id=1574452409286000650)
-EMOJI_USERS = discord.PartialEmoji(name="Playlist_Users", id=1574452561048633354)
+EMOJI_BROWSE = discord.PartialEmoji(name="browse", id=1574456458429599764)
+EMOJI_ADD = discord.PartialEmoji(name="add", id=1574456406113779772)
+EMOJI_USERS = discord.PartialEmoji(name="Users", id=1574456302778712084)
 
 
 def header_label(num_str: str, title: str) -> str:
@@ -106,7 +108,7 @@ class UserSelect(ui.Select):
 class UserFilterView(ui.LayoutView):
     def __init__(self, bot_ref: commands.Bot, user_ids: list[int]):
         super().__init__(timeout=180)
-        container = ui.Container(accent_color=GRADIENT_COLORS[2])
+        container = ui.Container(accent_color=COLOR_USERS)
         container.add_item(ui.TextDisplay("ᴜꜱᴇʀꜱ"))
         container.add_item(ui.ActionRow(UserSelect(bot_ref, user_ids)))
         self.add_item(container)
@@ -145,7 +147,7 @@ class PlaylistSelect(ui.Select):
 class PlaylistSelectView(ui.LayoutView):
     def __init__(self, rows, header_text: str = "ʙʀᴏᴡꜱᴇ"):
         super().__init__(timeout=180)
-        container = ui.Container(accent_color=GRADIENT_COLORS[0])
+        container = ui.Container(accent_color=COLOR_BROWSE)
         container.add_item(ui.TextDisplay(header_text))
         container.add_item(ui.ActionRow(PlaylistSelect(rows)))
         self.add_item(container)
@@ -157,7 +159,7 @@ class PlaylistLinkView(ui.LayoutView):
         self.pl_url = url
         self.copied = False
 
-        container = ui.Container(accent_color=GRADIENT_COLORS[1])
+        container = ui.Container(accent_color=COLOR_ADD)
         container.add_item(ui.TextDisplay(header_label("01", platform.upper())))
         container.add_item(ui.TextDisplay(f"{title}\n```\n{url}\n```"))
 
@@ -194,9 +196,9 @@ class MainDashboardView(ui.LayoutView):
         self.add_item(ui.TextDisplay("PLAYLIST SELECTOR"))
 
         rows_spec = [
-            ("ʙʀᴏᴡꜱᴇ", "browse", GRADIENT_COLORS[0], EMOJI_BROWSE, self.on_browse),
-            ("ᴀᴅᴅ", "add", GRADIENT_COLORS[1], EMOJI_ADD, self.on_add),
-            ("ᴜꜱᴇʀꜱ", "users", GRADIENT_COLORS[2], EMOJI_USERS, self.on_users),
+            ("ʙʀᴏᴡꜱᴇ", "browse", COLOR_BROWSE, EMOJI_BROWSE, self.on_browse),
+            ("ᴀᴅᴅ", "add", COLOR_ADD, EMOJI_ADD, self.on_add),
+            ("ᴜꜱᴇʀꜱ", "users", COLOR_USERS, EMOJI_USERS, self.on_users),
         ]
 
         for label_text, key, color, custom_emoji, cb in rows_spec:
