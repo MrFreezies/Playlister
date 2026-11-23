@@ -1,5 +1,7 @@
 import logging
 import os
+import re
+import urllib.request
 import discord
 from discord import ui
 from discord.ext import commands
@@ -20,15 +22,58 @@ COLOR_ADD = 0x3E46CC
 COLOR_USERS = 0x08B3CD
 
 FULLWIDTH_DIGITS = str.maketrans("0123456789", "０１２３４５６７８９")
+SMALL_CAPS = str.maketrans(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢ",
+)
 
 EMOJI_BROWSE = discord.PartialEmoji(name="browse", id=1574456458429599764)
 EMOJI_ADD = discord.PartialEmoji(name="add", id=1574456406113779772)
 EMOJI_USERS = discord.PartialEmoji(name="Users", id=1574456302778712084)
 
 
+def to_small_caps(text: str) -> str:
+    return text.translate(SMALL_CAPS)
+
+
 def header_label(num_str: str, title: str) -> str:
     fw = num_str.translate(FULLWIDTH_DIGITS)
-    return f"{fw}｜{title}"
+    return f"{fw}｜{to_small_caps(title)}"
+
+
+def fetch_spotify_meta(url: str) -> dict:
+    result = {"cover": None, "owner": None}
+    if "spotify.com" not in url.lower():
+        return result
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+
+        img_match = re.search(
+            r'<meta\s+(?:property|name)=["\']og:image["\']\s+content=["\']([^"\']+)["\']',
+            html,
+            re.IGNORECASE,
+        )
+        if img_match:
+            result["cover"] = img_match.group(1)
+
+        desc_match = re.search(
+            r'<meta\s+(?:property|name)=["\']og:description["\']\s+content=["\']([^"\']+)["\']',
+            html,
+            re.IGNORECASE,
+        )
+        if desc_match:
+            desc = desc_match.group(1)
+            owner_match = re.search(r"Playlist\s*·\s*([^·\n]+)", desc)
+            if owner_match:
+                result["owner"] = owner_match.group(1).strip()
+    except Exception as exc:
+        logging.warning("Could not fetch Spotify metadata for %s: %s", url, exc)
+    return result
 
 
 class AddPlaylistModal(ui.Modal, title="Add a Playlist"):
@@ -166,9 +211,30 @@ class PlaylistLinkView(ui.LayoutView):
         self.pl_url = url
         self.copied = False
 
+        meta = fetch_spotify_meta(url)
+        cover_url = meta["cover"]
+        owner_sc = to_small_caps(meta["owner"]) if meta["owner"] else None
+        platform_sc = to_small_caps(platform)
+
+        lines = [title]
+        if owner_sc:
+            lines.append(owner_sc)
+        lines.append(platform_sc)
+        lines.append(f"```\n{url}\n```")
+        info_display = ui.TextDisplay("\n".join(lines))
+
         container = ui.Container(accent_color=COLOR_ADD)
-        container.add_item(ui.TextDisplay(header_label("01", platform.upper())))
-        container.add_item(ui.TextDisplay(f"{title}\n```\n{url}\n```"))
+        container.add_item(ui.TextDisplay(header_label("01", platform)))
+
+        if cover_url:
+            container.add_item(
+                ui.Section(
+                    info_display,
+                    accessory=ui.Thumbnail(url=cover_url),
+                )
+            )
+        else:
+            container.add_item(info_display)
 
         open_btn = ui.Button(
             style=discord.ButtonStyle.link,
@@ -187,9 +253,7 @@ class PlaylistLinkView(ui.LayoutView):
     async def copy_link(self, interaction: discord.Interaction):
         self.copied = not self.copied
         self.copy_btn.emoji = "▪️" if self.copied else "▫️"
-        self.copy_btn.style = (
-            discord.ButtonStyle.primary if self.copied else discord.ButtonStyle.secondary
-        )
+        self.copy_btn.style = discord.ButtonStyle.secondary
         await interaction.response.edit_message(view=self)
         await interaction.followup.send(self.pl_url, ephemeral=True)
 
@@ -211,7 +275,7 @@ class MainDashboardView(ui.LayoutView):
         for label_text, key, color, custom_emoji, cb in rows_spec:
             is_selected = self.selected_key == key
             btn = ui.Button(
-                style=discord.ButtonStyle.primary if is_selected else discord.ButtonStyle.secondary,
+                style=discord.ButtonStyle.secondary,
                 custom_id=f"pl_{key}",
                 emoji=custom_emoji,
             )
