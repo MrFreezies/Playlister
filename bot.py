@@ -8,16 +8,18 @@ import storage
 load_dotenv()
 storage.init_db()
 
-# Smooth gradient from electric cyan/blue through violet to magenta/pink
 GRADIENT_COLORS = [
-    0x6366F1,  # 01 Browse (indigo-violet)
-    0x8B5CF6,  # 02 Add (violet)
-    0xB84AD9,  # 03 Users (purple-magenta)
+    0x6366F1,
+    0x8B5CF6,
+    0xB84AD9,
 ]
+
+FULLWIDTH_DIGITS = str.maketrans("0123456789", "０１２３４５６７８９")
 
 
 def header_label(num_str: str, title: str) -> str:
-    return f"{num_str}｜{' '.join(title.upper())}"
+    fw = num_str.translate(FULLWIDTH_DIGITS)
+    return f"{fw}｜{' '.join(title.upper())}"
 
 
 class AddPlaylistModal(ui.Modal, title="Add a Playlist"):
@@ -158,11 +160,11 @@ class PlaylistLinkView(ui.LayoutView):
         open_btn = ui.Button(
             style=discord.ButtonStyle.link,
             url=url,
-            emoji="↗",
+            emoji="🔗",
         )
         self.copy_btn = ui.Button(
             style=discord.ButtonStyle.secondary,
-            emoji="☐",
+            emoji="📋",
         )
         self.copy_btn.callback = self.copy_link
 
@@ -171,7 +173,7 @@ class PlaylistLinkView(ui.LayoutView):
 
     async def copy_link(self, interaction: discord.Interaction):
         self.copied = not self.copied
-        self.copy_btn.emoji = "☑" if self.copied else "☐"
+        self.copy_btn.emoji = "✅" if self.copied else "📋"
         self.copy_btn.style = (
             discord.ButtonStyle.primary if self.copied else discord.ButtonStyle.secondary
         )
@@ -185,13 +187,12 @@ class MainDashboardView(ui.LayoutView):
         self.bot_ref = bot_ref
         self.selected_key = selected_key
 
-        # Top header with no surrounding box
         self.add_item(ui.TextDisplay("PLAYLIST SELECTOR"))
 
         rows_spec = [
-            ("01", "BROWSE", "browse", "▸", "▾", GRADIENT_COLORS[0], self.on_browse),
-            ("02", "ADD", "add", "＋", "✓", GRADIENT_COLORS[1], self.on_add),
-            ("03", "USERS", "users", "▸", "▾", GRADIENT_COLORS[2], self.on_users),
+            ("01", "BROWSE", "browse", "▶️", "🔽", GRADIENT_COLORS[0], self.on_browse),
+            ("02", "ADD", "add", "➕", "✅", GRADIENT_COLORS[1], self.on_add),
+            ("03", "USERS", "users", "▶️", "🔽", GRADIENT_COLORS[2], self.on_users),
         ]
 
         for num_str, title, key, idle_icon, active_icon, color, cb in rows_spec:
