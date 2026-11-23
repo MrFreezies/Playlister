@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -39,13 +40,72 @@ def to_small_caps(text: str) -> str:
     return text.translate(SMALL_CAPS)
 
 
-def header_label(num_str: str, title: str) -> str:
+def top_header_label(num_str: str, playlist_title: str, owner_name: str | None) -> str:
     fw = num_str.translate(FULLWIDTH_DIGITS)
-    return f"{fw}｜{to_small_caps(title)}"
+    title_sc = to_small_caps(playlist_title)
+    if owner_name:
+        owner_sc = to_small_caps(owner_name)
+        return f"{fw}｜{title_sc} · {owner_sc}"
+    return f"{fw}｜{title_sc}"
+
+
+def extract_spotify_playlist_id(url: str) -> str | None:
+    match = re.search(r"spotify\.com/(?:intl-[a-z]{2}/)?playlist/([a-zA-Z0-9]+)", url)
+    return match.group(1) if match else None
+
+
+def _fetch_spotify_api_stats(playlist_id: str) -> str | None:
+    client_id = os.getenv("SPOTIFY_CLIENT_ID")
+    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        return None
+    try:
+        auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+        token_req = urllib.request.Request(
+            "https://accounts.spotify.com/api/token",
+            data=urllib.parse.urlencode({"grant_type": "client_credentials"}).encode(),
+            headers={
+                "Authorization": f"Basic {auth}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(token_req, timeout=4) as resp:
+            token_data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+        access_token = token_data.get("access_token")
+        if not access_token:
+            return None
+
+        api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}?fields=tracks.total,tracks.items(track(duration_ms))"
+        api_req = urllib.request.Request(
+            api_url,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        with urllib.request.urlopen(api_req, timeout=4) as resp:
+            pl_data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+
+        tracks_obj = pl_data.get("tracks") or {}
+        total_tracks = tracks_obj.get("total")
+        total_ms = 0
+        for item in tracks_obj.get("items") or []:
+            trk = item.get("track") or {}
+            if isinstance(trk.get("duration_ms"), int):
+                total_ms += trk["duration_ms"]
+
+        parts = []
+        if isinstance(total_tracks, int):
+            parts.append(f"{total_tracks} tracks")
+        if total_ms > 0:
+            hours = total_ms / 3_600_000
+            parts.append(f"{hours:.1f} hrs")
+        return " · ".join(parts) if parts else None
+    except Exception as exc:
+        logging.debug("Spotify API stats lookup failed for %s: %s", playlist_id, exc)
+        return None
 
 
 def _fetch_spotify_meta_sync(url: str) -> dict:
-    result = {"cover": None, "owner": None}
+    result = {"cover": None, "owner": None, "stats": None}
     if "spotify.com" not in url.lower():
         return result
 
@@ -97,6 +157,10 @@ def _fetch_spotify_meta_sync(url: str) -> dict:
                         result["owner"] = owner_match.group(1).strip()
         except Exception as exc:
             logging.debug("Spotify HTML meta lookup failed for %s: %s", url, exc)
+
+    pl_id = extract_spotify_playlist_id(url)
+    if pl_id:
+        result["stats"] = _fetch_spotify_api_stats(pl_id)
 
     return result
 
@@ -270,6 +334,7 @@ class PlaylistSelect(ui.Select):
                     tags=row["tags"] or "",
                     cover_url=meta["cover"],
                     owner_name=meta["owner"],
+                    stats_text=meta["stats"],
                 ),
                 ephemeral=True,
             )
@@ -297,6 +362,7 @@ class PlaylistLinkView(ui.LayoutView):
         tags: str = "",
         cover_url: str | None = None,
         owner_name: str | None = None,
+        stats_text: str | None = None,
     ):
         super().__init__(timeout=180)
         self.playlist_id = playlist_id
@@ -305,28 +371,27 @@ class PlaylistLinkView(ui.LayoutView):
         self.pl_tags = tags
         self.copied = False
 
-        owner_sc = to_small_caps(owner_name) if owner_name else None
-        platform_sc = to_small_caps(platform)
-
-        lines = [title]
-        if owner_sc:
-            lines.append(owner_sc)
-        lines.append(platform_sc)
-        lines.append(f"```\n{url}\n```")
-        info_display = ui.TextDisplay("\n".join(lines))
+        header_display = ui.TextDisplay(top_header_label("01", title, owner_name))
+        sub_lines = [to_small_caps(platform)]
+        if stats_text:
+            sub_lines.append(to_small_caps(stats_text))
+        platform_display = ui.TextDisplay("\n".join(sub_lines))
+        url_display = ui.TextDisplay(f"```\n{url}\n```")
 
         container = ui.Container(accent_color=COLOR_ADD)
-        container.add_item(ui.TextDisplay(header_label("01", platform)))
-
         if cover_url:
             container.add_item(
                 ui.Section(
-                    info_display,
+                    header_display,
+                    platform_display,
                     accessory=ui.Thumbnail(media=cover_url),
                 )
             )
         else:
-            container.add_item(info_display)
+            container.add_item(header_display)
+            container.add_item(platform_display)
+
+        container.add_item(url_display)
 
         open_btn = ui.Button(
             style=discord.ButtonStyle.link,
