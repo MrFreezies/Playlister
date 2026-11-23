@@ -363,7 +363,6 @@ class PlaylistLinkView(ui.LayoutView):
         owner_name: str | None = None,
         stats_text: str | None = None,
         can_delete: bool = False,
-        printed: bool = False,
     ):
         super().__init__(timeout=180)
         self.playlist_id = playlist_id
@@ -375,7 +374,6 @@ class PlaylistLinkView(ui.LayoutView):
         self.owner_name = owner_name
         self.stats_text = stats_text
         self.can_delete = can_delete
-        self.printed = printed
 
         header_display = ui.TextDisplay(top_header_label("01", title))
 
@@ -398,9 +396,6 @@ class PlaylistLinkView(ui.LayoutView):
         else:
             container.add_item(header_display)
             container.add_item(detail_display)
-
-        if self.printed:
-            container.add_item(ui.TextDisplay(f"`{url}`"))
 
         open_btn = ui.Button(
             style=discord.ButtonStyle.link,
@@ -433,19 +428,7 @@ class PlaylistLinkView(ui.LayoutView):
         self.add_item(container)
 
     async def print_link(self, interaction: discord.Interaction):
-        next_view = PlaylistLinkView(
-            playlist_id=self.playlist_id,
-            title=self.pl_title,
-            url=self.pl_url,
-            platform=self.pl_platform,
-            tags=self.pl_tags,
-            cover_url=self.cover_url,
-            owner_name=self.owner_name,
-            stats_text=self.stats_text,
-            can_delete=self.can_delete,
-            printed=not self.printed,
-        )
-        await interaction.response.edit_message(view=next_view)
+        await interaction.response.send_message(self.pl_url, ephemeral=True)
 
     async def edit_playlist(self, interaction: discord.Interaction):
         await interaction.response.send_modal(
