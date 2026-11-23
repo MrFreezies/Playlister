@@ -41,3 +41,20 @@ def get_playlists(user_id: int | None = None, query: str | None = None):
             params.extend([pattern, pattern, pattern])
         sql += " ORDER BY id DESC LIMIT 25"
         return conn.execute(sql, params).fetchall()
+
+
+def update_playlist(playlist_id: int, title: str, url: str, platform: str, tags: str = "") -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            UPDATE playlists
+            SET title = ?, url = ?, platform = ?, tags = ?
+            WHERE id = ?
+            """,
+            (title.strip(), url.strip(), platform.strip(), tags.strip(), playlist_id),
+        )
+
+
+def delete_playlist(playlist_id: int) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
