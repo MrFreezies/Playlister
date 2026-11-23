@@ -7,7 +7,7 @@ import re
 import urllib.parse
 import urllib.request
 import discord
-from discord import ui
+from discord import app_commands, ui
 from discord.ext import commands
 from dotenv import load_dotenv
 import storage
@@ -525,12 +525,25 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.event
 async def on_ready():
     bot.add_view(MainDashboardView(bot))
+    try:
+        await bot.tree.sync()
+    except Exception as exc:
+        logging.warning("Slash tree sync failed: %s", exc)
     print(f"Logged in as {bot.user}")
 
 
 @bot.command(name="PL")
 async def pl_command(ctx: commands.Context):
     await ctx.send(view=MainDashboardView(bot))
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+
+@bot.tree.command(name="pl", description="Open the playlist selector")
+async def pl_slash(interaction: discord.Interaction):
+    await interaction.response.send_message(view=MainDashboardView(bot), ephemeral=True)
 
 
 token = os.getenv("DISCORD_TOKEN")
