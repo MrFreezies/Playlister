@@ -42,7 +42,7 @@ def to_small_caps(text: str) -> str:
 
 def top_header_label(num_str: str, playlist_title: str) -> str:
     fw = num_str.translate(FULLWIDTH_DIGITS)
-    return f"{fw}｜{to_small_caps(playlist_title)}"
+    return f"### {fw}｜{to_small_caps(playlist_title)}"
 
 
 def _parse_stats_from_text(text: str) -> str | None:
@@ -360,6 +360,12 @@ class PlaylistLinkView(ui.LayoutView):
 
         container.add_item(url_display)
 
+        open_btn = ui.Button(
+            style=discord.ButtonStyle.link,
+            url=url,
+            emoji="🔗",
+        )
+
         self.print_btn = ui.Button(
             style=discord.ButtonStyle.secondary,
             label="ᴘʀɪɴᴛ",
@@ -378,7 +384,7 @@ class PlaylistLinkView(ui.LayoutView):
         )
         delete_btn.callback = self.delete_playlist
 
-        container.add_item(ui.ActionRow(self.print_btn, edit_btn, delete_btn))
+        container.add_item(ui.ActionRow(open_btn, self.print_btn, edit_btn, delete_btn))
         self.add_item(container)
 
     async def print_link(self, interaction: discord.Interaction):
