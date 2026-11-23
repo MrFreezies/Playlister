@@ -45,6 +45,28 @@ def top_header_label(num_str: str, playlist_title: str) -> str:
     return f"### {fw}｜{to_small_caps(playlist_title)}"
 
 
+async def resolve_user_labels(
+    bot_ref: commands.Bot, guild: discord.Guild | None, user_ids: list[int]
+) -> dict[int, str]:
+    labels: dict[int, str] = {}
+    for uid in user_ids[:25]:
+        if guild:
+            member = guild.get_member(uid)
+            if member:
+                labels[uid] = member.display_name
+                continue
+        cached = bot_ref.get_user(uid)
+        if cached:
+            labels[uid] = cached.display_name
+            continue
+        try:
+            fetched = await bot_ref.fetch_user(uid)
+            labels[uid] = fetched.display_name
+        except Exception:
+            labels[uid] = f"User {uid}"
+    return labels
+
+
 def _parse_stats_from_text(text: str) -> str | None:
     parts = []
     tracks_match = re.search(r"(\d[\d,]*)\s*(?:songs?|tracks?)", text, re.IGNORECASE)
@@ -167,10 +189,7 @@ class AddPlaylistModal(ui.Modal, title="Add a Playlist"):
             platform,
             self.pl_tags.value,
         )
-        await interaction.response.send_message(
-            f"Saved {self.pl_title.value.strip()} ({platform}).",
-            ephemeral=True,
-        )
+        await interaction.response.edit_message(view=MainDashboardView(bot))
 
 
 class EditPlaylistModal(ui.Modal, title="Edit Playlist"):
@@ -210,22 +229,29 @@ class EditPlaylistModal(ui.Modal, title="Edit Playlist"):
         title = self.pl_title.value.strip()
         tags = self.pl_tags.value.strip()
         storage.update_playlist(self.playlist_id, title, url, platform, tags)
-        await interaction.response.send_message(
-            f"Updated {title} ({platform}).",
-            ephemeral=True,
+        meta = await fetch_spotify_meta(url)
+        await interaction.response.edit_message(
+            view=PlaylistLinkView(
+                playlist_id=self.playlist_id,
+                title=title,
+                url=url,
+                platform=platform,
+                tags=tags,
+                cover_url=meta["cover"],
+                owner_name=meta["owner"],
+                stats_text=meta["stats"],
+            )
         )
 
 
 class UserSelect(ui.Select):
-    def __init__(self, bot_ref: commands.Bot, user_ids: list[int]):
-        self.bot_ref = bot_ref
+    def __init__(self, user_labels: dict[int, str], user_ids: list[int]):
         options = []
         for uid in user_ids[:25]:
-            member = bot_ref.get_user(uid)
-            display = member.display_name if member else f"User {uid}"
+            display = user_labels.get(uid) or f"User {uid}"
             options.append(
                 discord.SelectOption(
-                    label=(display or f"User {uid}")[:40],
+                    label=display[:40],
                     value=str(uid),
                 )
             )
@@ -240,23 +266,21 @@ class UserSelect(ui.Select):
         uid = int(self.values[0])
         rows = storage.get_playlists(user_id=uid)
         if not rows:
-            await interaction.response.send_message(
-                "No playlists found for that user.",
-                ephemeral=True,
+            await interaction.response.edit_message(
+                view=UserFilterView({uid: "No playlists"}, [uid])
             )
             return
-        await interaction.response.send_message(
+        await interaction.response.edit_message(
             view=PlaylistSelectView(rows, header_text="ᴜꜱᴇʀꜱ"),
-            ephemeral=True,
         )
 
 
 class UserFilterView(ui.LayoutView):
-    def __init__(self, bot_ref: commands.Bot, user_ids: list[int]):
+    def __init__(self, user_labels: dict[int, str], user_ids: list[int]):
         super().__init__(timeout=180)
         container = ui.Container(accent_color=COLOR_USERS)
         container.add_item(ui.TextDisplay("ᴜꜱᴇʀꜱ"))
-        container.add_item(ui.ActionRow(UserSelect(bot_ref, user_ids)))
+        container.add_item(ui.ActionRow(UserSelect(user_labels, user_ids)))
         self.add_item(container)
 
 
@@ -280,26 +304,20 @@ class PlaylistSelect(ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        try:
-            row = self.rows_map[self.values[0]]
-            meta = await fetch_spotify_meta(row["url"])
-            await interaction.followup.send(
-                view=PlaylistLinkView(
-                    playlist_id=row["id"],
-                    title=row["title"],
-                    url=row["url"],
-                    platform=row["platform"],
-                    tags=row["tags"] or "",
-                    cover_url=meta["cover"],
-                    owner_name=meta["owner"],
-                    stats_text=meta["stats"],
-                ),
-                ephemeral=True,
+        row = self.rows_map[self.values[0]]
+        meta = await fetch_spotify_meta(row["url"])
+        await interaction.response.edit_message(
+            view=PlaylistLinkView(
+                playlist_id=row["id"],
+                title=row["title"],
+                url=row["url"],
+                platform=row["platform"],
+                tags=row["tags"] or "",
+                cover_url=meta["cover"],
+                owner_name=meta["owner"],
+                stats_text=meta["stats"],
             )
-        except Exception as exc:
-            logging.exception("Failed to open playlist view")
-            await interaction.followup.send(f"Error opening playlist: {exc}", ephemeral=True)
+        )
 
 
 class PlaylistSelectView(ui.LayoutView):
@@ -387,7 +405,6 @@ class PlaylistLinkView(ui.LayoutView):
         self.printed = not self.printed
         self.print_btn.style = discord.ButtonStyle.secondary
         await interaction.response.edit_message(view=self)
-        await interaction.followup.send(self.pl_url, ephemeral=True)
 
     async def edit_playlist(self, interaction: discord.Interaction):
         await interaction.response.send_modal(
@@ -401,10 +418,11 @@ class PlaylistLinkView(ui.LayoutView):
 
     async def delete_playlist(self, interaction: discord.Interaction):
         storage.delete_playlist(self.playlist_id)
-        await interaction.response.send_message(
-            f"Deleted {self.pl_title}.",
-            ephemeral=True,
-        )
+        rows = storage.get_playlists()
+        if rows:
+            await interaction.response.edit_message(view=PlaylistSelectView(rows, "ʙʀᴏᴡꜱᴇ"))
+        else:
+            await interaction.response.edit_message(view=MainDashboardView(bot))
 
 
 class MainDashboardView(ui.LayoutView):
@@ -439,41 +457,26 @@ class MainDashboardView(ui.LayoutView):
             self.add_item(box)
 
     async def on_browse(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        if interaction.message:
-            await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="browse"))
         rows = storage.get_playlists()
         if not rows:
-            await interaction.followup.send(
-                "No playlists saved yet. Use ᴀᴅᴅ first.",
-                ephemeral=True,
-            )
+            await interaction.response.edit_message(view=MainDashboardView(self.bot_ref, selected_key="browse"))
             return
-        await interaction.followup.send(
+        await interaction.response.edit_message(
             view=PlaylistSelectView(rows, "ʙʀᴏᴡꜱᴇ"),
-            ephemeral=True,
         )
 
     async def on_add(self, interaction: discord.Interaction):
         await interaction.response.send_modal(AddPlaylistModal())
-        if interaction.message:
-            await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="add"))
 
     async def on_users(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        if interaction.message:
-            await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="users"))
         rows = storage.get_playlists()
         user_ids = list(dict.fromkeys(r["user_id"] for r in rows))
         if not user_ids:
-            await interaction.followup.send(
-                "No users have saved playlists yet.",
-                ephemeral=True,
-            )
+            await interaction.response.edit_message(view=MainDashboardView(self.bot_ref, selected_key="users"))
             return
-        await interaction.followup.send(
-            view=UserFilterView(self.bot_ref, user_ids),
-            ephemeral=True,
+        user_labels = await resolve_user_labels(self.bot_ref, interaction.guild, user_ids)
+        await interaction.response.edit_message(
+            view=UserFilterView(user_labels, user_ids),
         )
 
 
