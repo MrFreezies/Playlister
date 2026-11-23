@@ -225,13 +225,12 @@ class UserSelect(ui.Select):
             display = member.display_name if member else f"User {uid}"
             options.append(
                 discord.SelectOption(
-                    label=(display or f"User {uid}")[:100],
+                    label=(display or f"User {uid}")[:40],
                     value=str(uid),
-                    description=f"ID: {uid}"[:100],
                 )
             )
         super().__init__(
-            placeholder="Pick a user...",
+            placeholder="User...",
             min_values=1,
             max_values=1,
             options=options,
@@ -266,18 +265,15 @@ class PlaylistSelect(ui.Select):
         self.rows_map = {str(r["id"]): r for r in rows}
         options = []
         for r in rows[:25]:
-            title = (r["title"] or "Untitled")[:100]
-            plat = r["platform"] or "Other"
-            tags = r["tags"] or "No tags"
+            title = (r["title"] or "Untitled")[:40]
             options.append(
                 discord.SelectOption(
                     label=title,
                     value=str(r["id"]),
-                    description=f"{plat} | {tags}"[:100],
                 )
             )
         super().__init__(
-            placeholder="Choose a playlist...",
+            placeholder="Playlist...",
             min_values=1,
             max_values=1,
             options=options,
@@ -363,7 +359,6 @@ class PlaylistLinkView(ui.LayoutView):
         open_btn = ui.Button(
             style=discord.ButtonStyle.link,
             url=url,
-            emoji="🔗",
         )
 
         self.print_btn = ui.Button(
