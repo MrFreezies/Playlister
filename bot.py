@@ -1,5 +1,5 @@
 import asyncio
-import base64
+import html
 import json
 import logging
 import os
@@ -40,68 +40,28 @@ def to_small_caps(text: str) -> str:
     return text.translate(SMALL_CAPS)
 
 
-def top_header_label(num_str: str, playlist_title: str, owner_name: str | None) -> str:
+def top_header_label(num_str: str, playlist_title: str) -> str:
     fw = num_str.translate(FULLWIDTH_DIGITS)
-    title_sc = to_small_caps(playlist_title)
-    if owner_name:
-        owner_sc = to_small_caps(owner_name)
-        return f"{fw}｜{title_sc} · {owner_sc}"
-    return f"{fw}｜{title_sc}"
+    return f"{fw}｜{to_small_caps(playlist_title)}"
 
 
-def extract_spotify_playlist_id(url: str) -> str | None:
-    match = re.search(r"spotify\.com/(?:intl-[a-z]{2}/)?playlist/([a-zA-Z0-9]+)", url)
-    return match.group(1) if match else None
+def _parse_stats_from_text(text: str) -> str | None:
+    parts = []
+    tracks_match = re.search(r"(\d[\d,]*)\s*(?:songs?|tracks?)", text, re.IGNORECASE)
+    if tracks_match:
+        parts.append(f"{tracks_match.group(1)} tracks")
 
+    dur_parts = []
+    hr_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:hr|hrs|hour|hours)", text, re.IGNORECASE)
+    min_match = re.search(r"(\d+)\s*(?:min|mins|minute|minutes)", text, re.IGNORECASE)
+    if hr_match:
+        dur_parts.append(f"{hr_match.group(1)}h")
+    if min_match:
+        dur_parts.append(f"{min_match.group(1)}m")
+    if dur_parts:
+        parts.append(" ".join(dur_parts))
 
-def _fetch_spotify_api_stats(playlist_id: str) -> str | None:
-    client_id = os.getenv("SPOTIFY_CLIENT_ID")
-    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
-    if not client_id or not client_secret:
-        return None
-    try:
-        auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-        token_req = urllib.request.Request(
-            "https://accounts.spotify.com/api/token",
-            data=urllib.parse.urlencode({"grant_type": "client_credentials"}).encode(),
-            headers={
-                "Authorization": f"Basic {auth}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(token_req, timeout=4) as resp:
-            token_data = json.loads(resp.read().decode("utf-8", errors="ignore"))
-        access_token = token_data.get("access_token")
-        if not access_token:
-            return None
-
-        api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}?fields=tracks.total,tracks.items(track(duration_ms))"
-        api_req = urllib.request.Request(
-            api_url,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        with urllib.request.urlopen(api_req, timeout=4) as resp:
-            pl_data = json.loads(resp.read().decode("utf-8", errors="ignore"))
-
-        tracks_obj = pl_data.get("tracks") or {}
-        total_tracks = tracks_obj.get("total")
-        total_ms = 0
-        for item in tracks_obj.get("items") or []:
-            trk = item.get("track") or {}
-            if isinstance(trk.get("duration_ms"), int):
-                total_ms += trk["duration_ms"]
-
-        parts = []
-        if isinstance(total_tracks, int):
-            parts.append(f"{total_tracks} tracks")
-        if total_ms > 0:
-            hours = total_ms / 3_600_000
-            parts.append(f"{hours:.1f} hrs")
-        return " · ".join(parts) if parts else None
-    except Exception as exc:
-        logging.debug("Spotify API stats lookup failed for %s: %s", playlist_id, exc)
-        return None
+    return " · ".join(parts) if parts else None
 
 
 def _fetch_spotify_meta_sync(url: str) -> dict:
@@ -119,48 +79,51 @@ def _fetch_spotify_meta_sync(url: str) -> dict:
         if data.get("author_name"):
             result["owner"] = str(data["author_name"]).strip()
     except Exception as exc:
-        logging.debug("Spotify oEmbed lookup failed for %s: %s", url, exc)
+        logging.debug("Spotify oEmbed failed for %s: %s", url, exc)
 
-    if not result["cover"] or not result["owner"]:
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/124.0.0.0 Safari/537.36"
-                    )
-                },
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                )
+            },
+        )
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            raw_html = resp.read().decode("utf-8", errors="ignore")
+
+        if not result["cover"]:
+            img_match = re.search(
+                r'<meta\s+(?:property|name)=["\']og:image["\']\s+content=["\']([^"\']+)["\']',
+                raw_html,
+                re.IGNORECASE,
             )
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                html = resp.read().decode("utf-8", errors="ignore")
+            if img_match:
+                result["cover"] = html.unescape(img_match.group(1))
 
-            if not result["cover"]:
-                img_match = re.search(
-                    r'<meta\s+(?:property|name)=["\']og:image["\']\s+content=["\']([^"\']+)["\']',
-                    html,
-                    re.IGNORECASE,
-                )
-                if img_match:
-                    result["cover"] = img_match.group(1)
+        desc_match = re.search(
+            r'<meta\s+(?:property|name)=["\']og:description["\']\s+content=["\']([^"\']+)["\']',
+            raw_html,
+            re.IGNORECASE,
+        )
+        desc_text = html.unescape(desc_match.group(1)) if desc_match else ""
 
-            if not result["owner"]:
-                desc_match = re.search(
-                    r'<meta\s+(?:property|name)=["\']og:description["\']\s+content=["\']([^"\']+)["\']',
-                    html,
-                    re.IGNORECASE,
-                )
-                if desc_match:
-                    owner_match = re.search(r"Playlist\s*·\s*([^·\n]+)", desc_match.group(1))
-                    if owner_match:
-                        result["owner"] = owner_match.group(1).strip()
-        except Exception as exc:
-            logging.debug("Spotify HTML meta lookup failed for %s: %s", url, exc)
+        if not result["owner"] and desc_text:
+            owner_match = re.search(
+                r"(?:Playlist|Listen to .*? on Spotify)\s*[·|•-]\s*([^·|•\n]+)",
+                desc_text,
+            )
+            if owner_match:
+                result["owner"] = owner_match.group(1).strip()
 
-    pl_id = extract_spotify_playlist_id(url)
-    if pl_id:
-        result["stats"] = _fetch_spotify_api_stats(pl_id)
+        result["stats"] = _parse_stats_from_text(desc_text) or _parse_stats_from_text(
+            html.unescape(re.sub(r"<[^>]+>", " ", raw_html))
+        )
+    except Exception as exc:
+        logging.debug("Spotify page lookup failed for %s: %s", url, exc)
 
     return result
 
@@ -369,40 +332,39 @@ class PlaylistLinkView(ui.LayoutView):
         self.pl_title = title
         self.pl_url = url
         self.pl_tags = tags
-        self.copied = False
+        self.printed = False
 
-        header_display = ui.TextDisplay(top_header_label("01", title, owner_name))
-        sub_lines = [to_small_caps(platform)]
+        header_display = ui.TextDisplay(top_header_label("01", title))
+
+        detail_lines = [to_small_caps(platform)]
+        if owner_name:
+            detail_lines.append(to_small_caps(owner_name))
         if stats_text:
-            sub_lines.append(to_small_caps(stats_text))
-        platform_display = ui.TextDisplay("\n".join(sub_lines))
-        url_display = ui.TextDisplay(f"```\n{url}\n```")
+            detail_lines.append(to_small_caps(stats_text))
+        detail_display = ui.TextDisplay("\n".join(detail_lines))
+
+        url_display = ui.TextDisplay(f"`{url}`")
 
         container = ui.Container(accent_color=COLOR_ADD)
         if cover_url:
             container.add_item(
                 ui.Section(
                     header_display,
-                    platform_display,
+                    detail_display,
                     accessory=ui.Thumbnail(media=cover_url),
                 )
             )
         else:
             container.add_item(header_display)
-            container.add_item(platform_display)
+            container.add_item(detail_display)
 
         container.add_item(url_display)
 
-        open_btn = ui.Button(
-            style=discord.ButtonStyle.link,
-            url=url,
-            emoji="🔗",
-        )
-        self.copy_btn = ui.Button(
+        self.print_btn = ui.Button(
             style=discord.ButtonStyle.secondary,
-            emoji="▫️",
+            label="ᴘʀɪɴᴛ",
         )
-        self.copy_btn.callback = self.copy_link
+        self.print_btn.callback = self.print_link
 
         edit_btn = ui.Button(
             style=discord.ButtonStyle.secondary,
@@ -416,13 +378,12 @@ class PlaylistLinkView(ui.LayoutView):
         )
         delete_btn.callback = self.delete_playlist
 
-        container.add_item(ui.ActionRow(open_btn, self.copy_btn, edit_btn, delete_btn))
+        container.add_item(ui.ActionRow(self.print_btn, edit_btn, delete_btn))
         self.add_item(container)
 
-    async def copy_link(self, interaction: discord.Interaction):
-        self.copied = not self.copied
-        self.copy_btn.emoji = "▪️" if self.copied else "▫️"
-        self.copy_btn.style = discord.ButtonStyle.secondary
+    async def print_link(self, interaction: discord.Interaction):
+        self.printed = not self.printed
+        self.print_btn.style = discord.ButtonStyle.secondary
         await interaction.response.edit_message(view=self)
         await interaction.followup.send(self.pl_url, ephemeral=True)
 
