@@ -16,10 +16,14 @@ GRADIENT_COLORS = [
 
 FULLWIDTH_DIGITS = str.maketrans("0123456789", "０１２３４５６７８９")
 
+EMOJI_BROWSE = discord.PartialEmoji(name="Playlist_Browse", id=1574452329976172596)
+EMOJI_ADD = discord.PartialEmoji(name="Playlist_Add", id=1574452409286000650)
+EMOJI_USERS = discord.PartialEmoji(name="Playlist_Users", id=1574452561048633354)
+
 
 def header_label(num_str: str, title: str) -> str:
     fw = num_str.translate(FULLWIDTH_DIGITS)
-    return f"{fw}｜{' '.join(title.upper())}"
+    return f"{fw}｜{title}"
 
 
 class AddPlaylistModal(ui.Modal, title="Add a Playlist"):
@@ -94,7 +98,7 @@ class UserSelect(ui.Select):
             )
             return
         await interaction.response.send_message(
-            view=PlaylistSelectView(rows, header_text="USER PLAYLISTS"),
+            view=PlaylistSelectView(rows, header_text="ᴜꜱᴇʀꜱ"),
             ephemeral=True,
         )
 
@@ -103,7 +107,7 @@ class UserFilterView(ui.LayoutView):
     def __init__(self, bot_ref: commands.Bot, user_ids: list[int]):
         super().__init__(timeout=180)
         container = ui.Container(accent_color=GRADIENT_COLORS[2])
-        container.add_item(ui.TextDisplay(header_label("03", "USERS")))
+        container.add_item(ui.TextDisplay("ᴜꜱᴇʀꜱ"))
         container.add_item(ui.ActionRow(UserSelect(bot_ref, user_ids)))
         self.add_item(container)
 
@@ -139,10 +143,10 @@ class PlaylistSelect(ui.Select):
 
 
 class PlaylistSelectView(ui.LayoutView):
-    def __init__(self, rows, header_text: str = "BROWSE"):
+    def __init__(self, rows, header_text: str = "ʙʀᴏᴡꜱᴇ"):
         super().__init__(timeout=180)
         container = ui.Container(accent_color=GRADIENT_COLORS[0])
-        container.add_item(ui.TextDisplay(header_label("01", header_text)))
+        container.add_item(ui.TextDisplay(header_text))
         container.add_item(ui.ActionRow(PlaylistSelect(rows)))
         self.add_item(container)
 
@@ -154,7 +158,7 @@ class PlaylistLinkView(ui.LayoutView):
         self.copied = False
 
         container = ui.Container(accent_color=GRADIENT_COLORS[1])
-        container.add_item(ui.TextDisplay(header_label("01", platform)))
+        container.add_item(ui.TextDisplay(header_label("01", platform.upper())))
         container.add_item(ui.TextDisplay(f"{title}\n```\n{url}\n```"))
 
         open_btn = ui.Button(
@@ -190,58 +194,61 @@ class MainDashboardView(ui.LayoutView):
         self.add_item(ui.TextDisplay("PLAYLIST SELECTOR"))
 
         rows_spec = [
-            ("01", "BROWSE", "browse", GRADIENT_COLORS[0], self.on_browse),
-            ("02", "ADD", "add", GRADIENT_COLORS[1], self.on_add),
-            ("03", "USERS", "users", GRADIENT_COLORS[2], self.on_users),
+            ("ʙʀᴏᴡꜱᴇ", "browse", GRADIENT_COLORS[0], EMOJI_BROWSE, self.on_browse),
+            ("ᴀᴅᴅ", "add", GRADIENT_COLORS[1], EMOJI_ADD, self.on_add),
+            ("ᴜꜱᴇʀꜱ", "users", GRADIENT_COLORS[2], EMOJI_USERS, self.on_users),
         ]
 
-        for num_str, title, key, color, cb in rows_spec:
+        for label_text, key, color, custom_emoji, cb in rows_spec:
             is_selected = self.selected_key == key
             btn = ui.Button(
                 style=discord.ButtonStyle.primary if is_selected else discord.ButtonStyle.secondary,
                 custom_id=f"pl_{key}",
-                emoji="▪️" if is_selected else "▫️",
+                emoji=custom_emoji,
             )
             btn.callback = cb
 
             box = ui.Container(accent_color=color)
             box.add_item(
                 ui.Section(
-                    ui.TextDisplay(header_label(num_str, title)),
+                    ui.TextDisplay(label_text),
                     accessory=btn,
                 )
             )
             self.add_item(box)
 
     async def on_browse(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="browse"))
         rows = storage.get_playlists()
         if not rows:
-            await interaction.response.send_message(
-                "No playlists saved yet. Use 02｜ADD first.",
+            await interaction.followup.send(
+                "No playlists saved yet. Use ᴀᴅᴅ first.",
                 ephemeral=True,
             )
             return
-        await interaction.response.send_message(
-            view=PlaylistSelectView(rows, "BROWSE"),
+        await interaction.followup.send(
+            view=PlaylistSelectView(rows, "ʙʀᴏᴡꜱᴇ"),
             ephemeral=True,
         )
 
     async def on_add(self, interaction: discord.Interaction):
         await interaction.response.send_modal(AddPlaylistModal())
-        await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="add"))
+        if interaction.message:
+            await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="add"))
 
     async def on_users(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="users"))
         rows = storage.get_playlists()
         user_ids = list(dict.fromkeys(r["user_id"] for r in rows))
         if not user_ids:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "No users have saved playlists yet.",
                 ephemeral=True,
             )
             return
-        await interaction.response.send_message(
+        await interaction.followup.send(
             view=UserFilterView(self.bot_ref, user_ids),
             ephemeral=True,
         )
