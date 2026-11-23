@@ -1,6 +1,9 @@
+import asyncio
+import json
 import logging
 import os
 import re
+import urllib.parse
 import urllib.request
 import discord
 from discord import ui
@@ -41,39 +44,67 @@ def header_label(num_str: str, title: str) -> str:
     return f"{fw}｜{to_small_caps(title)}"
 
 
-def fetch_spotify_meta(url: str) -> dict:
+def _fetch_spotify_meta_sync(url: str) -> dict:
     result = {"cover": None, "owner": None}
     if "spotify.com" not in url.lower():
         return result
+
+    # 1. Try Spotify oEmbed endpoint
     try:
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
-
-        img_match = re.search(
-            r'<meta\s+(?:property|name)=["\']og:image["\']\s+content=["\']([^"\']+)["\']',
-            html,
-            re.IGNORECASE,
-        )
-        if img_match:
-            result["cover"] = img_match.group(1)
-
-        desc_match = re.search(
-            r'<meta\s+(?:property|name)=["\']og:description["\']\s+content=["\']([^"\']+)["\']',
-            html,
-            re.IGNORECASE,
-        )
-        if desc_match:
-            desc = desc_match.group(1)
-            owner_match = re.search(r"Playlist\s*·\s*([^·\n]+)", desc)
-            if owner_match:
-                result["owner"] = owner_match.group(1).strip()
+        oembed_url = "https://open.spotify.com/oembed?url=" + urllib.parse.quote(url, safe="")
+        req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+        if data.get("thumbnail_url"):
+            result["cover"] = data["thumbnail_url"]
+        if data.get("author_name"):
+            result["owner"] = str(data["author_name"]).strip()
     except Exception as exc:
-        logging.warning("Could not fetch Spotify metadata for %s: %s", url, exc)
+        logging.debug("Spotify oEmbed lookup failed for %s: %s", url, exc)
+
+    # 2. Fallback to OpenGraph tags on page HTML
+    if not result["cover"] or not result["owner"]:
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/124.0.0.0 Safari/537.36"
+                    )
+                },
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                html = resp.read().decode("utf-8", errors="ignore")
+
+            if not result["cover"]:
+                img_match = re.search(
+                    r'<meta\s+(?:property|name)=["\']og:image["\']\s+content=["\']([^"\']+)["\']',
+                    html,
+                    re.IGNORECASE,
+                )
+                if img_match:
+                    result["cover"] = img_match.group(1)
+
+            if not result["owner"]:
+                desc_match = re.search(
+                    r'<meta\s+(?:property|name)=["\']og:description["\']\s+content=["\']([^"\']+)["\']',
+                    html,
+                    re.IGNORECASE,
+                )
+                if desc_match:
+                    owner_match = re.search(r"Playlist\s*·\s*([^·\n]+)", desc_match.group(1))
+                    if owner_match:
+                        result["owner"] = owner_match.group(1).strip()
+        except Exception as exc:
+            logging.debug("Spotify HTML meta lookup failed for %s: %s", url, exc)
+
     return result
+
+
+async def fetch_spotify_meta(url: str) -> dict:
+    return await asyncio.to_thread(_fetch_spotify_meta_sync, url)
 
 
 class AddPlaylistModal(ui.Modal, title="Add a Playlist"):
@@ -113,6 +144,49 @@ class AddPlaylistModal(ui.Modal, title="Add a Playlist"):
         )
         await interaction.response.send_message(
             f"Saved {self.pl_title.value.strip()} ({platform}).",
+            ephemeral=True,
+        )
+
+
+class EditPlaylistModal(ui.Modal, title="Edit Playlist"):
+    def __init__(self, playlist_id: int, current_title: str, current_url: str, current_tags: str):
+        super().__init__()
+        self.playlist_id = playlist_id
+        self.pl_title = ui.TextInput(
+            label="Playlist Name",
+            default=current_title[:80],
+            max_length=80,
+        )
+        self.pl_url = ui.TextInput(
+            label="Playlist URL",
+            default=current_url[:250],
+            max_length=250,
+        )
+        self.pl_tags = ui.TextInput(
+            label="Tags / Genre (Optional)",
+            default=(current_tags or "")[:100],
+            required=False,
+            max_length=100,
+        )
+        self.add_item(self.pl_title)
+        self.add_item(self.pl_url)
+        self.add_item(self.pl_tags)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        url = self.pl_url.value.strip()
+        lower_url = url.lower()
+        if "spotify.com" in lower_url:
+            platform = "Spotify"
+        elif "youtube.com" in lower_url or "youtu.be" in lower_url:
+            platform = "YouTube"
+        else:
+            platform = "Other"
+
+        title = self.pl_title.value.strip()
+        tags = self.pl_tags.value.strip()
+        storage.update_playlist(self.playlist_id, title, url, platform, tags)
+        await interaction.response.send_message(
+            f"Updated {title} ({platform}).",
             ephemeral=True,
         )
 
@@ -185,12 +259,18 @@ class PlaylistSelect(ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         row = self.rows_map[self.values[0]]
-        await interaction.response.send_message(
+        meta = await fetch_spotify_meta(row["url"])
+        await interaction.followup.send(
             view=PlaylistLinkView(
+                playlist_id=row["id"],
                 title=row["title"],
                 url=row["url"],
                 platform=row["platform"],
+                tags=row["tags"] or "",
+                cover_url=meta["cover"],
+                owner_name=meta["owner"],
             ),
             ephemeral=True,
         )
@@ -206,14 +286,24 @@ class PlaylistSelectView(ui.LayoutView):
 
 
 class PlaylistLinkView(ui.LayoutView):
-    def __init__(self, title: str, url: str, platform: str):
+    def __init__(
+        self,
+        playlist_id: int,
+        title: str,
+        url: str,
+        platform: str,
+        tags: str = "",
+        cover_url: str | None = None,
+        owner_name: str | None = None,
+    ):
         super().__init__(timeout=180)
+        self.playlist_id = playlist_id
+        self.pl_title = title
         self.pl_url = url
+        self.pl_tags = tags
         self.copied = False
 
-        meta = fetch_spotify_meta(url)
-        cover_url = meta["cover"]
-        owner_sc = to_small_caps(meta["owner"]) if meta["owner"] else None
+        owner_sc = to_small_caps(owner_name) if owner_name else None
         platform_sc = to_small_caps(platform)
 
         lines = [title]
@@ -247,7 +337,19 @@ class PlaylistLinkView(ui.LayoutView):
         )
         self.copy_btn.callback = self.copy_link
 
-        container.add_item(ui.ActionRow(open_btn, self.copy_btn))
+        edit_btn = ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="ᴇᴅɪᴛ",
+        )
+        edit_btn.callback = self.edit_playlist
+
+        delete_btn = ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="ᴅᴇʟᴇᴛᴇ",
+        )
+        delete_btn.callback = self.delete_playlist
+
+        container.add_item(ui.ActionRow(open_btn, self.copy_btn, edit_btn, delete_btn))
         self.add_item(container)
 
     async def copy_link(self, interaction: discord.Interaction):
@@ -256,6 +358,23 @@ class PlaylistLinkView(ui.LayoutView):
         self.copy_btn.style = discord.ButtonStyle.secondary
         await interaction.response.edit_message(view=self)
         await interaction.followup.send(self.pl_url, ephemeral=True)
+
+    async def edit_playlist(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(
+            EditPlaylistModal(
+                playlist_id=self.playlist_id,
+                current_title=self.pl_title,
+                current_url=self.pl_url,
+                current_tags=self.pl_tags,
+            )
+        )
+
+    async def delete_playlist(self, interaction: discord.Interaction):
+        storage.delete_playlist(self.playlist_id)
+        await interaction.response.send_message(
+            f"Deleted {self.pl_title}.",
+            ephemeral=True,
+        )
 
 
 class MainDashboardView(ui.LayoutView):
@@ -273,7 +392,6 @@ class MainDashboardView(ui.LayoutView):
         ]
 
         for label_text, key, color, custom_emoji, cb in rows_spec:
-            is_selected = self.selected_key == key
             btn = ui.Button(
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"pl_{key}",
