@@ -164,7 +164,7 @@ class PlaylistLinkView(ui.LayoutView):
         )
         self.copy_btn = ui.Button(
             style=discord.ButtonStyle.secondary,
-            emoji="📋",
+            emoji="▫️",
         )
         self.copy_btn.callback = self.copy_link
 
@@ -173,7 +173,7 @@ class PlaylistLinkView(ui.LayoutView):
 
     async def copy_link(self, interaction: discord.Interaction):
         self.copied = not self.copied
-        self.copy_btn.emoji = "✅" if self.copied else "📋"
+        self.copy_btn.emoji = "▪️" if self.copied else "▫️"
         self.copy_btn.style = (
             discord.ButtonStyle.primary if self.copied else discord.ButtonStyle.secondary
         )
@@ -190,17 +190,17 @@ class MainDashboardView(ui.LayoutView):
         self.add_item(ui.TextDisplay("PLAYLIST SELECTOR"))
 
         rows_spec = [
-            ("01", "BROWSE", "browse", "▶️", "🔽", GRADIENT_COLORS[0], self.on_browse),
-            ("02", "ADD", "add", "➕", "✅", GRADIENT_COLORS[1], self.on_add),
-            ("03", "USERS", "users", "▶️", "🔽", GRADIENT_COLORS[2], self.on_users),
+            ("01", "BROWSE", "browse", GRADIENT_COLORS[0], self.on_browse),
+            ("02", "ADD", "add", GRADIENT_COLORS[1], self.on_add),
+            ("03", "USERS", "users", GRADIENT_COLORS[2], self.on_users),
         ]
 
-        for num_str, title, key, idle_icon, active_icon, color, cb in rows_spec:
+        for num_str, title, key, color, cb in rows_spec:
             is_selected = self.selected_key == key
             btn = ui.Button(
                 style=discord.ButtonStyle.primary if is_selected else discord.ButtonStyle.secondary,
                 custom_id=f"pl_{key}",
-                emoji=active_icon if is_selected else idle_icon,
+                emoji="▪️" if is_selected else "▫️",
             )
             btn.callback = cb
 
@@ -213,12 +213,8 @@ class MainDashboardView(ui.LayoutView):
             )
             self.add_item(box)
 
-    async def _set_selected(self, interaction: discord.Interaction, key: str):
-        updated = MainDashboardView(self.bot_ref, selected_key=key)
-        await interaction.message.edit(view=updated)
-
     async def on_browse(self, interaction: discord.Interaction):
-        await self._set_selected(interaction, "browse")
+        await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="browse"))
         rows = storage.get_playlists()
         if not rows:
             await interaction.response.send_message(
@@ -232,11 +228,11 @@ class MainDashboardView(ui.LayoutView):
         )
 
     async def on_add(self, interaction: discord.Interaction):
-        await self._set_selected(interaction, "add")
         await interaction.response.send_modal(AddPlaylistModal())
+        await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="add"))
 
     async def on_users(self, interaction: discord.Interaction):
-        await self._set_selected(interaction, "users")
+        await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="users"))
         rows = storage.get_playlists()
         user_ids = list(dict.fromkeys(r["user_id"] for r in rows))
         if not user_ids:
