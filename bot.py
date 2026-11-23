@@ -1,3 +1,4 @@
+import logging
 import os
 import discord
 from discord import ui
@@ -5,10 +6,12 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import storage
 
+logging.basicConfig(level=logging.INFO)
+
 load_dotenv()
 storage.init_db()
 
-# Left accent colours matched to the emoji artwork:
+# Left highlight colours matched to the emoji artwork:
 # browse (1574456458429599764) -> #9e1899
 # add    (1574456406113779772) -> #3e46cc
 # Users  (1574456302778712084) -> #08b3cd
@@ -78,7 +81,7 @@ class UserSelect(ui.Select):
             display = member.display_name if member else f"User {uid}"
             options.append(
                 discord.SelectOption(
-                    label=display[:100],
+                    label=(display or f"User {uid}")[:100],
                     value=str(uid),
                     description=f"ID: {uid}"[:100],
                 )
@@ -117,14 +120,18 @@ class UserFilterView(ui.LayoutView):
 class PlaylistSelect(ui.Select):
     def __init__(self, rows):
         self.rows_map = {str(r["id"]): r for r in rows}
-        options = [
-            discord.SelectOption(
-                label=r["title"][:100],
-                value=str(r["id"]),
-                description=f"{r['platform']} | {r['tags'] or 'No tags'}"[:100],
+        options = []
+        for r in rows[:25]:
+            title = (r["title"] or "Untitled")[:100]
+            plat = r["platform"] or "Other"
+            tags = r["tags"] or "No tags"
+            options.append(
+                discord.SelectOption(
+                    label=title,
+                    value=str(r["id"]),
+                    description=f"{plat} | {tags}"[:100],
+                )
             )
-            for r in rows
-        ]
         super().__init__(
             placeholder="Choose a playlist...",
             min_values=1,
@@ -221,7 +228,8 @@ class MainDashboardView(ui.LayoutView):
 
     async def on_browse(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="browse"))
+        if interaction.message:
+            await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="browse"))
         rows = storage.get_playlists()
         if not rows:
             await interaction.followup.send(
@@ -241,7 +249,8 @@ class MainDashboardView(ui.LayoutView):
 
     async def on_users(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="users"))
+        if interaction.message:
+            await interaction.message.edit(view=MainDashboardView(self.bot_ref, selected_key="users"))
         rows = storage.get_playlists()
         user_ids = list(dict.fromkeys(r["user_id"] for r in rows))
         if not user_ids:
