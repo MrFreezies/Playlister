@@ -25,6 +25,8 @@ COLOR_BROWSE = 0x9E1899
 COLOR_ADD = 0x3E46CC
 COLOR_USERS = 0x08B3CD
 
+ADMIN_ROLE_NAME = "bill overbeck"
+
 FULLWIDTH_DIGITS = str.maketrans("0123456789", "０１２３４５６７８９")
 SMALL_CAPS = str.maketrans(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
@@ -34,6 +36,14 @@ SMALL_CAPS = str.maketrans(
 EMOJI_BROWSE = discord.PartialEmoji(name="browse", id=1574456458429599764)
 EMOJI_ADD = discord.PartialEmoji(name="add", id=1574456406113779772)
 EMOJI_USERS = discord.PartialEmoji(name="Users", id=1574456302778712084)
+
+
+def is_admin_user(interaction: discord.Interaction) -> bool:
+    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+        return False
+    if interaction.user.guild_permissions.administrator:
+        return True
+    return any(role.name.lower() == ADMIN_ROLE_NAME for role in interaction.user.roles)
 
 
 def to_small_caps(text: str) -> str:
@@ -193,9 +203,17 @@ class AddPlaylistModal(ui.Modal, title="Add a Playlist"):
 
 
 class EditPlaylistModal(ui.Modal, title="Edit Playlist"):
-    def __init__(self, playlist_id: int, current_title: str, current_url: str, current_tags: str):
+    def __init__(
+        self,
+        playlist_id: int,
+        current_title: str,
+        current_url: str,
+        current_tags: str,
+        can_delete: bool = False,
+    ):
         super().__init__()
         self.playlist_id = playlist_id
+        self.can_delete = can_delete
         self.pl_title = ui.TextInput(
             label="Playlist Name",
             default=current_title[:80],
@@ -240,12 +258,14 @@ class EditPlaylistModal(ui.Modal, title="Edit Playlist"):
                 cover_url=meta["cover"],
                 owner_name=meta["owner"],
                 stats_text=meta["stats"],
+                can_delete=self.can_delete or is_admin_user(interaction),
             )
         )
 
 
 class UserSelect(ui.Select):
-    def __init__(self, user_labels: dict[int, str], user_ids: list[int]):
+    def __init__(self, user_labels: dict[int, str], user_ids: list[int], can_delete: bool = False):
+        self.can_delete = can_delete
         options = []
         for uid in user_ids[:25]:
             display = user_labels.get(uid) or f"User {uid}"
@@ -267,26 +287,27 @@ class UserSelect(ui.Select):
         rows = storage.get_playlists(user_id=uid)
         if not rows:
             await interaction.response.edit_message(
-                view=UserFilterView({uid: "No playlists"}, [uid])
+                view=UserFilterView({uid: "No playlists"}, [uid], can_delete=self.can_delete)
             )
             return
         await interaction.response.edit_message(
-            view=PlaylistSelectView(rows, header_text="ᴜꜱᴇʀꜱ"),
+            view=PlaylistSelectView(rows, header_text="ᴜꜱᴇʀꜱ", can_delete=self.can_delete),
         )
 
 
 class UserFilterView(ui.LayoutView):
-    def __init__(self, user_labels: dict[int, str], user_ids: list[int]):
+    def __init__(self, user_labels: dict[int, str], user_ids: list[int], can_delete: bool = False):
         super().__init__(timeout=180)
         container = ui.Container(accent_color=COLOR_USERS)
         container.add_item(ui.TextDisplay("ᴜꜱᴇʀꜱ"))
-        container.add_item(ui.ActionRow(UserSelect(user_labels, user_ids)))
+        container.add_item(ui.ActionRow(UserSelect(user_labels, user_ids, can_delete=can_delete)))
         self.add_item(container)
 
 
 class PlaylistSelect(ui.Select):
-    def __init__(self, rows):
+    def __init__(self, rows, can_delete: bool = False):
         self.rows_map = {str(r["id"]): r for r in rows}
+        self.can_delete = can_delete
         options = []
         for r in rows[:25]:
             title = (r["title"] or "Untitled")[:40]
@@ -316,16 +337,17 @@ class PlaylistSelect(ui.Select):
                 cover_url=meta["cover"],
                 owner_name=meta["owner"],
                 stats_text=meta["stats"],
+                can_delete=self.can_delete or is_admin_user(interaction),
             )
         )
 
 
 class PlaylistSelectView(ui.LayoutView):
-    def __init__(self, rows, header_text: str = "ʙʀᴏᴡꜱᴇ"):
+    def __init__(self, rows, header_text: str = "ʙʀᴏᴡꜱᴇ", can_delete: bool = False):
         super().__init__(timeout=180)
         container = ui.Container(accent_color=COLOR_BROWSE)
         container.add_item(ui.TextDisplay(header_text))
-        container.add_item(ui.ActionRow(PlaylistSelect(rows)))
+        container.add_item(ui.ActionRow(PlaylistSelect(rows, can_delete=can_delete)))
         self.add_item(container)
 
 
@@ -340,13 +362,20 @@ class PlaylistLinkView(ui.LayoutView):
         cover_url: str | None = None,
         owner_name: str | None = None,
         stats_text: str | None = None,
+        can_delete: bool = False,
+        printed: bool = False,
     ):
         super().__init__(timeout=180)
         self.playlist_id = playlist_id
         self.pl_title = title
         self.pl_url = url
+        self.pl_platform = platform
         self.pl_tags = tags
-        self.printed = False
+        self.cover_url = cover_url
+        self.owner_name = owner_name
+        self.stats_text = stats_text
+        self.can_delete = can_delete
+        self.printed = printed
 
         header_display = ui.TextDisplay(top_header_label("01", title))
 
@@ -356,8 +385,6 @@ class PlaylistLinkView(ui.LayoutView):
         if stats_text:
             detail_lines.append(to_small_caps(stats_text))
         detail_display = ui.TextDisplay("\n".join(detail_lines))
-
-        url_display = ui.TextDisplay(f"`{url}`")
 
         container = ui.Container(accent_color=COLOR_ADD)
         if cover_url:
@@ -372,7 +399,8 @@ class PlaylistLinkView(ui.LayoutView):
             container.add_item(header_display)
             container.add_item(detail_display)
 
-        container.add_item(url_display)
+        if self.printed:
+            container.add_item(ui.TextDisplay(f"`{url}`"))
 
         open_btn = ui.Button(
             style=discord.ButtonStyle.link,
@@ -392,19 +420,32 @@ class PlaylistLinkView(ui.LayoutView):
         )
         edit_btn.callback = self.edit_playlist
 
-        delete_btn = ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="ᴅᴇʟᴇᴛᴇ",
-        )
-        delete_btn.callback = self.delete_playlist
+        buttons = [open_btn, self.print_btn, edit_btn]
+        if self.can_delete:
+            delete_btn = ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="ᴅᴇʟᴇᴛᴇ",
+            )
+            delete_btn.callback = self.delete_playlist
+            buttons.append(delete_btn)
 
-        container.add_item(ui.ActionRow(open_btn, self.print_btn, edit_btn, delete_btn))
+        container.add_item(ui.ActionRow(*buttons))
         self.add_item(container)
 
     async def print_link(self, interaction: discord.Interaction):
-        self.printed = not self.printed
-        self.print_btn.style = discord.ButtonStyle.secondary
-        await interaction.response.edit_message(view=self)
+        next_view = PlaylistLinkView(
+            playlist_id=self.playlist_id,
+            title=self.pl_title,
+            url=self.pl_url,
+            platform=self.pl_platform,
+            tags=self.pl_tags,
+            cover_url=self.cover_url,
+            owner_name=self.owner_name,
+            stats_text=self.stats_text,
+            can_delete=self.can_delete,
+            printed=not self.printed,
+        )
+        await interaction.response.edit_message(view=next_view)
 
     async def edit_playlist(self, interaction: discord.Interaction):
         await interaction.response.send_modal(
@@ -413,14 +454,20 @@ class PlaylistLinkView(ui.LayoutView):
                 current_title=self.pl_title,
                 current_url=self.pl_url,
                 current_tags=self.pl_tags,
+                can_delete=self.can_delete,
             )
         )
 
     async def delete_playlist(self, interaction: discord.Interaction):
+        if not (self.can_delete or is_admin_user(interaction)):
+            await interaction.response.edit_message(view=self)
+            return
         storage.delete_playlist(self.playlist_id)
         rows = storage.get_playlists()
         if rows:
-            await interaction.response.edit_message(view=PlaylistSelectView(rows, "ʙʀᴏᴡꜱᴇ"))
+            await interaction.response.edit_message(
+                view=PlaylistSelectView(rows, "ʙʀᴏᴡꜱᴇ", can_delete=self.can_delete)
+            )
         else:
             await interaction.response.edit_message(view=MainDashboardView(bot))
 
@@ -457,18 +504,20 @@ class MainDashboardView(ui.LayoutView):
             self.add_item(box)
 
     async def on_browse(self, interaction: discord.Interaction):
+        can_del = is_admin_user(interaction)
         rows = storage.get_playlists()
         if not rows:
             await interaction.response.edit_message(view=MainDashboardView(self.bot_ref, selected_key="browse"))
             return
         await interaction.response.edit_message(
-            view=PlaylistSelectView(rows, "ʙʀᴏᴡꜱᴇ"),
+            view=PlaylistSelectView(rows, "ʙʀᴏᴡꜱᴇ", can_delete=can_del),
         )
 
     async def on_add(self, interaction: discord.Interaction):
         await interaction.response.send_modal(AddPlaylistModal())
 
     async def on_users(self, interaction: discord.Interaction):
+        can_del = is_admin_user(interaction)
         rows = storage.get_playlists()
         user_ids = list(dict.fromkeys(r["user_id"] for r in rows))
         if not user_ids:
@@ -476,7 +525,7 @@ class MainDashboardView(ui.LayoutView):
             return
         user_labels = await resolve_user_labels(self.bot_ref, interaction.guild, user_ids)
         await interaction.response.edit_message(
-            view=UserFilterView(user_labels, user_ids),
+            view=UserFilterView(user_labels, user_ids, can_delete=can_del),
         )
 
 
