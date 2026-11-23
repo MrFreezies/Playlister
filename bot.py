@@ -358,8 +358,8 @@ class PlaylistLinkView(ui.LayoutView):
 
         open_btn = ui.Button(
             style=discord.ButtonStyle.link,
+            label="\u200b",
             url=url,
-            emoji="🔗",
         )
 
         self.print_btn = ui.Button(
