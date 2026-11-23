@@ -327,7 +327,7 @@ class PlaylistSelect(ui.Select):
     async def callback(self, interaction: discord.Interaction):
         row = self.rows_map[self.values[0]]
         meta = await fetch_spotify_meta(row["url"])
-        await interaction.response.edit_message(
+        await interaction.response.send_message(
             view=PlaylistLinkView(
                 playlist_id=row["id"],
                 title=row["title"],
@@ -338,7 +338,8 @@ class PlaylistSelect(ui.Select):
                 owner_name=meta["owner"],
                 stats_text=meta["stats"],
                 can_delete=self.can_delete or is_admin_user(interaction),
-            )
+            ),
+            ephemeral=True,
         )
 
 
