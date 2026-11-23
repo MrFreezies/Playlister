@@ -8,13 +8,13 @@ import storage
 load_dotenv()
 storage.init_db()
 
-# Colours matched to the custom emoji accents:
-# browse (1574456458429599764) -> purple/violet
-# add    (1574456406113779772) -> blue
-# Users  (1574456302778712084) -> pink/magenta
-COLOR_BROWSE = 0x9B5DE5
-COLOR_ADD = 0x3B82F6
-COLOR_USERS = 0xEC4899
+# Left accent colours matched to the emoji artwork:
+# browse (1574456458429599764) -> #9e1899
+# add    (1574456406113779772) -> #3e46cc
+# Users  (1574456302778712084) -> #08b3cd
+COLOR_BROWSE = 0x9E1899
+COLOR_ADD = 0x3E46CC
+COLOR_USERS = 0x08B3CD
 
 FULLWIDTH_DIGITS = str.maketrans("0123456789", "０１２３４５６７８９")
 
@@ -211,8 +211,12 @@ class MainDashboardView(ui.LayoutView):
             btn.callback = cb
 
             box = ui.Container(accent_color=color)
-            box.add_item(ui.TextDisplay(label_text))
-            box.add_item(ui.ActionRow(btn))
+            box.add_item(
+                ui.Section(
+                    ui.TextDisplay(label_text),
+                    accessory=btn,
+                )
+            )
             self.add_item(box)
 
     async def on_browse(self, interaction: discord.Interaction):
