@@ -8,7 +8,7 @@ import storage
 load_dotenv()
 storage.init_db()
 
-# Colours matched to the new custom emoji accents:
+# Colours matched to the custom emoji accents:
 # browse (1574456458429599764) -> purple/violet
 # add    (1574456406113779772) -> blue
 # Users  (1574456302778712084) -> pink/magenta
@@ -211,12 +211,8 @@ class MainDashboardView(ui.LayoutView):
             btn.callback = cb
 
             box = ui.Container(accent_color=color)
-            box.add_item(
-                ui.Section(
-                    ui.TextDisplay(label_text),
-                    accessory=btn,
-                )
-            )
+            box.add_item(ui.TextDisplay(label_text))
+            box.add_item(ui.ActionRow(btn))
             self.add_item(box)
 
     async def on_browse(self, interaction: discord.Interaction):
