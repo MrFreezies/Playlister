@@ -384,6 +384,8 @@ class PlaylistLinkView(ui.LayoutView):
             detail_lines.append(to_small_caps(stats_text))
         detail_display = ui.TextDisplay("\n".join(detail_lines))
 
+        url_display = ui.TextDisplay(f"`{url}`")
+
         container = ui.Container(accent_color=COLOR_ADD)
         if cover_url:
             container.add_item(
@@ -396,6 +398,8 @@ class PlaylistLinkView(ui.LayoutView):
         else:
             container.add_item(header_display)
             container.add_item(detail_display)
+
+        container.add_item(url_display)
 
         open_btn = ui.Button(
             style=discord.ButtonStyle.link,
