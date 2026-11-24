@@ -203,8 +203,7 @@ class AddPlaylistModal(ui.Modal, title="Add a Playlist"):
 
         if self.allow_target_user:
             self.target_user_id = ui.TextInput(
-                label="Tag User ID (Admin Only, Optional)",
-                placeholder="Leave blank for yourself, or paste Discord user ID",
+                label="Tag User ID (Admin)",
                 required=False,
                 max_length=25,
             )
@@ -347,9 +346,12 @@ class PlaylistSelect(ui.Select):
         options = []
         for r in rows[:25]:
             title = (r["title"] or "Untitled")[:40]
+            raw_tags = (r["tags"] or "").strip()
+            desc = raw_tags[:100] if raw_tags else None
             options.append(
                 discord.SelectOption(
                     label=title,
+                    description=desc,
                     value=str(r["id"]),
                 )
             )
