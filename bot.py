@@ -25,7 +25,11 @@ COLOR_BROWSE = 0x9E1899
 COLOR_ADD = 0x3E46CC
 COLOR_USERS = 0x08B3CD
 
-ADMIN_ROLE_NAME = "bill overbeck"
+ADMIN_USER_ID = 493423167705186304
+
+# Put exact playlist titles here to pin them at the top in order.
+# Everything else sorts alphabetically after them.
+CUSTOM_ORDER: list[str] = []
 
 FULLWIDTH_DIGITS = str.maketrans("0123456789", "０１２３４５６７８９")
 SMALL_CAPS = str.maketrans(
@@ -39,11 +43,20 @@ EMOJI_USERS = discord.PartialEmoji(name="Users", id=1574456302778712084)
 
 
 def is_admin_user(interaction: discord.Interaction) -> bool:
-    if not interaction.guild or not isinstance(interaction.user, discord.Member):
-        return False
-    if interaction.user.guild_permissions.administrator:
-        return True
-    return any(role.name.lower() == ADMIN_ROLE_NAME for role in interaction.user.roles)
+    return interaction.user.id == ADMIN_USER_ID
+
+
+def sort_playlists(rows: list) -> list:
+    items = list(rows)
+    order_map = {name.strip().lower(): idx for idx, name in enumerate(CUSTOM_ORDER)}
+    items.sort(
+        key=lambda r: (
+            0 if (r["title"] or "").strip().lower() in order_map else 1,
+            order_map.get((r["title"] or "").strip().lower(), 0),
+            (r["title"] or "").strip().lower(),
+        )
+    )
+    return items
 
 
 def to_small_caps(text: str) -> str:
@@ -165,22 +178,37 @@ async def fetch_spotify_meta(url: str) -> dict:
 
 
 class AddPlaylistModal(ui.Modal, title="Add a Playlist"):
-    pl_title = ui.TextInput(
-        label="Playlist Name",
-        placeholder="Late night synthwave",
-        max_length=80,
-    )
-    pl_url = ui.TextInput(
-        label="Playlist URL",
-        placeholder="https://open.spotify.com/playlist/...",
-        max_length=250,
-    )
-    pl_tags = ui.TextInput(
-        label="Tags / Genre (Optional)",
-        placeholder="synthwave, chill, heavy",
-        required=False,
-        max_length=100,
-    )
+    def __init__(self, allow_target_user: bool = False):
+        super().__init__()
+        self.allow_target_user = allow_target_user
+        self.pl_title = ui.TextInput(
+            label="Playlist Name",
+            placeholder="Late night synthwave",
+            max_length=80,
+        )
+        self.pl_url = ui.TextInput(
+            label="Playlist URL",
+            placeholder="https://open.spotify.com/playlist/...",
+            max_length=250,
+        )
+        self.pl_tags = ui.TextInput(
+            label="Tags / Genre (Optional)",
+            placeholder="synthwave, chill, heavy",
+            required=False,
+            max_length=100,
+        )
+        self.add_item(self.pl_title)
+        self.add_item(self.pl_url)
+        self.add_item(self.pl_tags)
+
+        if self.allow_target_user:
+            self.target_user_id = ui.TextInput(
+                label="Tag User ID (Admin Only, Optional)",
+                placeholder="Leave blank for yourself, or paste Discord user ID",
+                required=False,
+                max_length=25,
+            )
+            self.add_item(self.target_user_id)
 
     async def on_submit(self, interaction: discord.Interaction):
         url = self.pl_url.value.strip()
@@ -192,8 +220,14 @@ class AddPlaylistModal(ui.Modal, title="Add a Playlist"):
         else:
             platform = "Other"
 
+        owner_id = interaction.user.id
+        if self.allow_target_user and is_admin_user(interaction):
+            raw_uid = self.target_user_id.value.strip()
+            if raw_uid.isdigit():
+                owner_id = int(raw_uid)
+
         storage.add_playlist(
-            interaction.user.id,
+            owner_id,
             self.pl_title.value,
             url,
             platform,
@@ -284,7 +318,9 @@ class UserSelect(ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         uid = int(self.values[0])
-        rows = storage.get_playlists(user_id=uid)
+        rows = sort_playlists(
+            [r for r in storage.get_playlists() if r["user_id"] == uid]
+        )
         if not rows:
             await interaction.response.edit_message(
                 view=UserFilterView({uid: "No playlists"}, [uid], can_delete=self.can_delete)
@@ -451,7 +487,7 @@ class PlaylistLinkView(ui.LayoutView):
             await interaction.response.edit_message(view=self)
             return
         storage.delete_playlist(self.playlist_id)
-        rows = storage.get_playlists()
+        rows = sort_playlists(storage.get_playlists())
         if rows:
             await interaction.response.edit_message(
                 view=PlaylistSelectView(rows, "ʙʀᴏᴡꜱᴇ", can_delete=self.can_delete)
@@ -493,7 +529,7 @@ class MainDashboardView(ui.LayoutView):
 
     async def on_browse(self, interaction: discord.Interaction):
         can_del = is_admin_user(interaction)
-        rows = storage.get_playlists()
+        rows = sort_playlists(storage.get_playlists())
         if not rows:
             await interaction.response.edit_message(view=MainDashboardView(self.bot_ref, selected_key="browse"))
             return
@@ -502,11 +538,13 @@ class MainDashboardView(ui.LayoutView):
         )
 
     async def on_add(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(AddPlaylistModal())
+        await interaction.response.send_modal(
+            AddPlaylistModal(allow_target_user=is_admin_user(interaction))
+        )
 
     async def on_users(self, interaction: discord.Interaction):
         can_del = is_admin_user(interaction)
-        rows = storage.get_playlists()
+        rows = sort_playlists(storage.get_playlists())
         user_ids = list(dict.fromkeys(r["user_id"] for r in rows))
         if not user_ids:
             await interaction.response.edit_message(view=MainDashboardView(self.bot_ref, selected_key="users"))
